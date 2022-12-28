@@ -121,19 +121,24 @@ class Prototypical(Model):
         z = self.encoder(x_train1)
         #print(z)
     
-        z_prototypes = tf.math.reduce_mean(z, axis=1)
-        print(z_prototypes)
+        z_prototypes = tf.math.reduce_mean(z, axis=0)
+        #print(z_prototypes)
         
         z_query = self.encoder(x_test1)
         #print(z_query)
-        z_query = tf.math.reduce_mean(z_query, axis=1)
-        #print(z_query)
+        #z_query = tf.math.reduce_mean(z_query, axis=1)
+        #print(z_query[1])
         
-        dists = calc_euclidian_dists(z_prototypes, z_query)
+        #dists = calc_euclidian_dists(z_prototypes, z_query)
+        dists = np.array([calc_euclidian_dists(z_prototypes, z_query[i])  
+                          for i in range(len(z_query))])
         
-        log_p_y = tf.nn.log_softmax(-dists, axis=-1)
-        log = np.array(log_p_y)
-        print(log)
+        print(dists)
+        
+        log_p_y = [tf.nn.log_softmax(-dists[i], axis=-1) for i in range(len(dists))]
+        #log_p_y = tf.nn.log_softmax(-dists[0:10], axis=-1)
+        log_p_y = np.array(log_p_y)
+        #print(log_p_y)
         
         #loss = -tf.reduce_mean(tf.reshape(tf.reduce_sum(tf.multiply(y_onehot, log_p_y), axis=-1), [-1]))
         
@@ -141,10 +146,6 @@ class Prototypical(Model):
                 
              
 net = Prototypical(32,32,3).call()
-        
-        
-        
-        
         
         
         
