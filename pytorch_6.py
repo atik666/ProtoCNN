@@ -200,11 +200,6 @@ for epoch in range(1, max_epoch + 1):
         Softmax = torch.nn.Softmax(dim=1)
         logits = Softmax(dist)
         
-        #loss = F.cross_entropy(logits, label1)
-        #loss = F.nll_loss(logits, label1)
-        
-        #print('loss: ', loss)
-        
         acc = count_acc(logits, label1)
         
         #print('acc: ', acc)
@@ -216,37 +211,37 @@ for epoch in range(1, max_epoch + 1):
         #loss.requires_grad = False
         loss.backward()
         optimizer.step()
-        
-        
 
-    # for i, batch in enumerate(val_loader):
+    for i, batch in enumerate(val_loader):
         
-    #     trainx1 = batch[0].cuda()      
-    #     trainx2 = batch[2].cuda()
+        trainx1 = batch[0].cuda()      
+        trainx2 = batch[2].cuda()
         
-    #     label1 = batch[1].cuda()
-    #     label2 = batch[3].cuda()
+        label1 = batch[1].cuda()
+        label2 = batch[3].cuda()
         
-    #     samples1 = model(trainx1)
+        proto = model(trainx1, trainx2)
+        proto1 = proto[0].mean(dim=0)
+        proto2 = proto[1].mean(dim=0)
         
-    #     dist1 = euclidean_metric(proto1,samples1)
-    #     dist2 = euclidean_metric(proto2,samples1)
+        dist1 = euclidean_metric(proto1,proto[0])
+        dist2 = euclidean_metric(proto2,proto[1])
         
-    #     dist = torch.stack((dist1,dist2), dim = 1).cuda()
+        dist = torch.stack((dist1,dist2), dim = 1).cuda()
       
-    #     Softmax = torch.nn.Softmax(dim=1)
-    #     logits = Softmax(dist)
+        Softmax = torch.nn.Softmax(dim=1)
+        logits = Softmax(dist)
         
-    #     loss = F.cross_entropy(logits, label1)
+        loss = criterion(proto[0], proto[1], label1)
         
-    #     #print('loss: ', loss)
+        #print('loss: ', loss)
         
-    #     acc = count_acc(logits, label1)
+        acc = count_acc(logits, label1)
         
-    #     #print('acc: ', acc)
+        #print('acc: ', acc)
         
-    #     print('epoch {}, val {}/{}, loss={:.4f} acc={:.4f}'
-    #       .format(epoch, i, len(val_loader), loss.item(), acc))
+        print('epoch {}, val {}/{}, loss={:.4f} acc={:.4f}'
+          .format(epoch, i, len(val_loader), loss.item(), acc))
 
         
 
