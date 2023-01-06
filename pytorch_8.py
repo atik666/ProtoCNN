@@ -99,7 +99,7 @@ def euclidean_metric(proto, samples):
     
     logits = torch.FloatTensor(logits)
         
-    return logits
+    return logits.cuda()
 
 class ContrastiveLoss(torch.nn.Module):
     """
@@ -119,7 +119,6 @@ class ContrastiveLoss(torch.nn.Module):
 
         return loss_contrastive
     
-
 def contrastive_loss(y, preds, margin=1):
 	# explicitly cast the true class label data type to the predicted
 	# class label data type (otherwise we run the risk of having two
@@ -128,35 +127,41 @@ def contrastive_loss(y, preds, margin=1):
 	# calculate the contrastive loss between the true labels and
 	# the predicted labels
 	squaredPreds = torch.square(preds)
-	squaredMargin = torch.square(torch.maximum(margin - preds, 0))
+	squaredMargin = torch.square(torch.maximum(margin - preds, torch.tensor([0]).cuda()))
 	loss = torch.mean(y * squaredPreds + (1 - y) * squaredMargin)
 	# return the computed contrastive loss to the calling function
 	return loss
 
+
+class Contrastive_loss_torch(torch.nn.Module):
     
-def loss_dist(batch, target=0):
+    def __init__(self, margin=1.0):
+        super(Contrastive_loss_torch, self).__init__()
+        self.margin = margin
     
-    train1, train2 = batch[0].cuda(), batch[2].cuda()
+    def forward(self, y, preds):
     
-    if target == 0:
-        
-        x1, x2 = train1, train2
-        
-    elif target == 1:
-        
-        x1, x2 = train2, train1
-        
-        
-    proto = model(x1, x2)
-    proto1 = proto[0].mean(dim=0)
-    #proto2 = proto[1].mean(dim=0)
+	# explicitly cast the true class label data type to the predicted
+	# class label data type (otherwise we run the risk of having two
+	# separate data types, causing TensorFlow to error out)
+	# y = tf.cast(y, preds.dtype)
+	# calculate the contrastive loss between the true labels and
+	# the predicted labels
+       	squaredPreds = torch.square(preds)
+       	squaredMargin = torch.square(torch.maximum(self.margin - preds, torch.tensor([0]).cuda()))
+       	loss = torch.mean(y * squaredPreds + (1 - y) * squaredMargin)
+       	# return the computed contrastive loss to the calling function
+       	return loss
+
     
-    dist1 = euclidean_metric(proto1,proto[0])
-    #dist2 = euclidean_metric(proto1,proto[1])
+def Center(batch):
     
-    #dist = torch.stack((dist1,dist2), dim = 1).cuda()
+    train0, train1 = batch[0].cuda(), batch[2].cuda()    
         
-    return dist1
+    proto = model(train0, train1)
+    proto0, proto1 = proto[0].mean(dim=0), proto[1].mean(dim=0)
+        
+    return proto[0], proto[1], proto0, proto1
 
 def conv_block(in_channels, out_channels):
     bn = nn.BatchNorm2d(out_channels)
@@ -198,7 +203,7 @@ model = Convnet().cuda()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.5)
-criterion = ContrastiveLoss()
+criterion = Contrastive_loss_torch()
 
 max_epoch = 5
 for epoch in range(1, max_epoch + 1):
@@ -207,25 +212,57 @@ for epoch in range(1, max_epoch + 1):
     model.train()
     
     for i, batch in enumerate(trainloader):
-
-        
-        dist0 = loss_dist(batch, target = 0)
-        dist1 = loss_dist(batch, target = 1)
-        
-        #print(dist0, "__", dist1)
         
         trainx0 = batch[0].cuda()
         label0 = batch[1].cuda()
         trainx1 = batch[2].cuda()
         label1 = batch[3].cuda()
         
-        proto0, proto1 = model(trainx1, trainx1)
-        proto0_mean = proto0.mean(dim=0)
-        proto1_mean = proto1.mean(dim=0)
+        label = torch.cat([label0, label1], dim=0)
+       
+        proto0, proto1, center0, center1 = Center(batch)
         
-        loss0 = criterion(proto0, proto1, label0)
-        loss1 = criterion(proto0, proto1, label0)
-    
+        proto = torch.cat([proto0, proto0], dim=0)
+        
+        dist0 = euclidean_metric(center0,proto)
+        dist1 = euclidean_metric(center1,proto)
+        
+        dist = torch.stack((dist0,dist1), dim = 1).cuda()
+        
+        Softmax = nn.Softmax(dim=1)
+        output = Softmax(dist)
+        
+        loss = F.cross_entropy(output, label)
+        
+        acc = count_acc(output, label)
+        
+        
+        
+        
+        # dist00 = euclidean_metric(center0,proto0)
+        # dist01 = euclidean_metric(center1,proto0)
+        
+        # dist10 = euclidean_metric(center0,proto1)
+        # dist11 = euclidean_metric(center1,proto1)
+        
+
+        
+        # dist = torch.stack((dist00,dist01), dim = 1).cuda()
+        
+        # Softmax = nn.Softmax(dim=1)
+        # output = Softmax(dist)
+        
+        # loss = F.cross_entropy(output, label0)
+        
+        # loss0 = criterion(proto0, proto1, label0)
+        # loss1 = criterion(proto0, proto1, label1)
+        
+        # loss1 = criterion(dist11, dist10, label1)
+        
+        # loss0 = criterion(label0, dist00)
+        # loss1 = criterion(label1, dist11)
+        
+        # loss = loss0
       
         # Softmax = torch.nn.Softmax(dim=1)
         # logits0 = Softmax(dist0)
@@ -240,40 +277,42 @@ for epoch in range(1, max_epoch + 1):
           .format(epoch, i, len(trainloader), loss.item()))
         
         optimizer.zero_grad()
-        #loss.requires_grad = False
+        loss.requires_grad = True
         loss.backward()
         optimizer.step()
+        
+    
 
-    for i, batch in enumerate(val_loader):
+    # for i, batch in enumerate(val_loader):
         
-        trainx1 = batch[0].cuda()      
-        trainx2 = batch[2].cuda()
+    #     trainx1 = batch[0].cuda()      
+    #     trainx2 = batch[2].cuda()
         
-        label1 = batch[1].cuda()
-        label2 = batch[3].cuda()
+    #     label1 = batch[1].cuda()
+    #     label2 = batch[3].cuda()
         
-        proto = model(trainx1, trainx2)
-        proto1 = proto[0].mean(dim=0)
-        proto2 = proto[1].mean(dim=0)
+    #     proto = model(trainx1, trainx2)
+    #     proto1 = proto[0].mean(dim=0)
+    #     proto2 = proto[1].mean(dim=0)
         
-        dist1 = euclidean_metric(proto1,proto[0])
-        dist2 = euclidean_metric(proto2,proto[1])
+    #     dist1 = euclidean_metric(proto1,proto[0])
+    #     dist2 = euclidean_metric(proto2,proto[1])
         
-        dist = torch.stack((dist1,dist2), dim = 1).cuda()
+    #     dist = torch.stack((dist1,dist2), dim = 1).cuda()
       
-        Softmax = torch.nn.Softmax(dim=1)
-        logits = Softmax(dist)
+    #     Softmax = torch.nn.Softmax(dim=1)
+    #     logits = Softmax(dist)
         
-        loss = criterion(proto[0], proto[1], label1)
+    #     loss = criterion(proto[0], proto[1], label1)
         
-        #print('loss: ', loss)
+    #     #print('loss: ', loss)
         
-        acc = count_acc(logits, label1)
+    #     acc = count_acc(logits, label1)
         
-        #print('acc: ', acc)
+    #     #print('acc: ', acc)
         
-        print('epoch {}, val {}/{}, loss={:.4f} acc={:.4f}'
-          .format(epoch, i, len(val_loader), loss.item(), acc))
+    #     print('epoch {}, val {}/{}, loss={:.4f} acc={:.4f}'
+    #       .format(epoch, i, len(val_loader), loss.item(), acc))
 
         
 
