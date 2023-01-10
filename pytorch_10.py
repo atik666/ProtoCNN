@@ -23,7 +23,7 @@ def import_img(path):
     for img in os.listdir(path):
         try :
             img_array = cv2.imread(os.path.join(path, img), cv2.IMREAD_UNCHANGED)
-            img_array = cv2.resize(img_array, (64, 64))
+            img_array = cv2.resize(img_array, (227, 227))
             img_array = np.squeeze(img_array).astype('float64')
             img_array /= 255
             training_data.append(img_array)
@@ -83,19 +83,11 @@ val_dataset = TensorDataset(val1, y_val1, val2, y_val2)
 val_loader = DataLoader(val_dataset,
                         shuffle=True,
                         batch_size=20)
-
-def set_gpu(x):
-    os.environ['CUDA_VISIBLE_DEVICES'] = x
-    print('using gpu:', x)
     
     
 def count_acc(logits, label):
     pred = torch.argmax(logits, dim=1)
     return (pred == label).type(torch.cuda.FloatTensor).mean().item()
-
-
-def dot_metric(a, b):
-    return torch.mm(a, b.t())
 
 
 def euclidean_metric(proto, samples):
@@ -107,7 +99,7 @@ def euclidean_metric(proto, samples):
     
     logits = torch.FloatTensor(logits)
         
-    return logits
+    return logits.cuda()
 
 class ContrastiveLoss(torch.nn.Module):
     """
@@ -126,6 +118,40 @@ class ContrastiveLoss(torch.nn.Module):
 
 
         return loss_contrastive
+    
+def contrastive_loss(y, preds, margin=1):
+	# explicitly cast the true class label data type to the predicted
+	# class label data type (otherwise we run the risk of having two
+	# separate data types, causing TensorFlow to error out)
+	# y = tf.cast(y, preds.dtype)
+	# calculate the contrastive loss between the true labels and
+	# the predicted labels
+	squaredPreds = torch.square(preds)
+	squaredMargin = torch.square(torch.maximum(margin - preds, torch.tensor([0]).cuda()))
+	loss = torch.mean(y * squaredPreds + (1 - y) * squaredMargin)
+	# return the computed contrastive loss to the calling function
+	return loss
+
+
+class Contrastive_loss_torch(torch.nn.Module):
+    
+    def __init__(self, margin=1.0):
+        super(Contrastive_loss_torch, self).__init__()
+        self.margin = margin
+    
+    def forward(self, y, preds):
+    
+	# explicitly cast the true class label data type to the predicted
+	# class label data type (otherwise we run the risk of having two
+	# separate data types, causing TensorFlow to error out)
+	# y = tf.cast(y, preds.dtype)
+	# calculate the contrastive loss between the true labels and
+	# the predicted labels
+       	squaredPreds = torch.square(preds)
+       	squaredMargin = torch.square(torch.maximum(self.margin - preds, torch.tensor([0]).cuda()))
+       	loss = torch.mean(y * squaredPreds + (1 - y) * squaredMargin)
+       	# return the computed contrastive loss to the calling function
+       	return loss
 
 def conv_block(in_channels, out_channels):
     bn = nn.BatchNorm2d(out_channels)
@@ -153,29 +179,92 @@ class Convnet(nn.Module):
     def forward(self, x1, x2):
         
         x1 = self.encoder(x1)
+        x1 = F.relu(x1)
         x1 = x1.reshape(x1.size(0), -1)
         #x = x.mean(dim=0)
         
         x2 = self.encoder(x2)
+        x2 = F.relu(x2)
         x2 = x2.reshape(x2.size(0), -1)
         #x = x.mean(dim=0)
         
         return x1, x2
+    
 
-model = Convnet().cuda()
+class AlexNet(nn.Module):
+    def __init__(self):
+        super(AlexNet, self).__init__()
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(3, 96, kernel_size=11, stride=4, padding=0),
+            nn.BatchNorm2d(96),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size = 3, stride = 2))
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(96, 256, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size = 3, stride = 2))
+        self.layer3 = nn.Sequential(
+            nn.Conv2d(256, 384, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(384),
+            nn.ReLU())
+        self.layer4 = nn.Sequential(
+            nn.Conv2d(384, 384, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(384),
+            nn.ReLU())
+        self.layer5 = nn.Sequential(
+            nn.Conv2d(384, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size = 3, stride = 2))
+        self.fc = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(9216, 4096),
+            nn.ReLU())
+        self.fc1 = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(4096, 4096),
+            nn.ReLU())
+        
+    def forward(self, x0, x1):
+        
+        out = self.layer1(x0)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.layer5(out)
+        out = out.reshape(out.size(0), -1)
+        out = self.fc(out)
+        out = self.fc1(out)
+        #out = self.fc2(out)
+        
+        out1 = self.layer1(x1)
+        out1 = self.layer2(out1)
+        out1 = self.layer3(out1)
+        out1 = self.layer4(out1)
+        out1 = self.layer5(out1)
+        out1 = out1.reshape(out1.size(0), -1)
+        out1 = self.fc(out1)
+        out1 = self.fc1(out1)
+    
+        return out, out1
 
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+model = AlexNet().cuda()
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+#optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.5)
 criterion = ContrastiveLoss()
+#criterion = Contrastive_loss_torch()
 
-max_epoch = 5
+max_epoch = 20
 for epoch in range(1, max_epoch + 1):
     lr_scheduler.step()
     
     model.train()
     
     for i, batch in enumerate(trainloader):
+        
         trainx1 = batch[0].cuda()
         trainx2 = batch[2].cuda()
     
@@ -223,6 +312,7 @@ for epoch in range(1, max_epoch + 1):
         # loss.requires_grad = True
         loss.backward()
         optimizer.step()
+    lr_scheduler.step()
 
     # for i, batch in enumerate(val_loader):
         
@@ -256,15 +346,6 @@ for epoch in range(1, max_epoch + 1):
     #       .format(epoch, i, len(val_loader), loss.item(), acc))
 
         
-
-
-
-
-
-
-
-
-
 
 
 
